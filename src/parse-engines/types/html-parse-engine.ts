@@ -9,54 +9,67 @@ import IParseEngine from "../common/parse-engine";
 import ISimpleTextDocument from "../common/simple-text-document";
 
 class HtmlParseEngine implements IParseEngine {
-    public languageId: string = "html";
-    public extension: string = "html";
+  public languageId: string = "html";
+  public extension: string = "html";
 
-    public async parse(textDocument: ISimpleTextDocument): Promise<CssClassDefinition[]> {
-        const definitions: CssClassDefinition[] = [];
-        const urls: string[] = [];
-        let tag: string;
-        let isRelStylesheet: boolean = false;
-        let linkHref: string;
+  public async parse(
+    textDocument: ISimpleTextDocument
+  ): Promise<CssClassDefinition[]> {
+    const definitions: CssClassDefinition[] = [];
+    const urls: string[] = [];
+    let tag: string;
+    let isRelStylesheet: boolean = false;
+    let linkHref: string;
 
-        const parser = new html.Parser({
-            onattribute: (name: string, value: string) => {
-                if (name === "rel" && value === "stylesheet") {
-                    isRelStylesheet = true;
-                }
+    const parser = new html.Parser({
+      onclosetag: () => {
+        if (tag === "link" && isRelStylesheet && linkHref) {
+          urls.push(linkHref);
+        }
 
-                if (tag === "link" && name === "href" && value.indexOf("http") === 0) {
-                    linkHref = value;
-                }
-            },
-            onclosetag: () => {
-                if (tag === "link" && isRelStylesheet && linkHref) {
-                    urls.push(linkHref);
-                }
+        isRelStylesheet = false;
+        linkHref = null;
+      },
+      onopentag: (name: string, attribs: { [s: string]: string }) => {
+        tag = name;
 
-                isRelStylesheet = false;
-                linkHref = null;
-            },
-            onopentagname: (name: string) => {
-                tag = name;
-            },
-            ontext: (text: string) => {
-                if (tag === "style") {
-                    definitions.push(...CssClassExtractor.extract(css.parse(text)));
-                }
-            },
-        });
+        for (let key in attribs) {
+          if (attribs.hasOwnProperty(key)) {
+            const value = attribs[key];
+            if (key === "rel" && value === "stylesheet") {
+              isRelStylesheet = true;
+            }
+            if (
+              tag === "link" &&
+              name === "href" &&
+              value.indexOf("http") === 0
+            ) {
+              linkHref = value;
+            }
+          }
+        }
+      },
+      ontext: (text: string) => {
+        if (tag === "style") {
+          definitions.push(...CssClassExtractor.extract(css.parse(text)));
+        }
+      }
+    });
 
-        parser.write(textDocument.getText());
-        parser.end();
+    parser.write(textDocument.getText());
+    parser.end();
 
-        await Bluebird.map(urls, async (url) => {
-            const content = await request.get(url);
-            definitions.push(...CssClassExtractor.extract(css.parse(content)));
-        }, { concurrency: 10 });
+    await Bluebird.map(
+      urls,
+      async url => {
+        const content = await request.get(url);
+        definitions.push(...CssClassExtractor.extract(css.parse(content)));
+      },
+      { concurrency: 10 }
+    );
 
-        return definitions;
-    }
+    return definitions;
+  }
 }
 
 export default HtmlParseEngine;
